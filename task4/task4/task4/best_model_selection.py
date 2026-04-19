@@ -1,6 +1,4 @@
 import os
-import io
-import re
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -9,10 +7,13 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB, GaussianNB
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.base import clone
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from sklearn.preprocessing import LabelEncoder, label_binarize
 from sklearn.decomposition import PCA
 import warnings
+import json
 
 warnings.filterwarnings('ignore')
 
@@ -85,19 +86,29 @@ schemes = {
 ml_models = {
     "Multinomial Naive Bayes": (MultinomialNB(), {'alpha': [0.1, 0.5, 1.0, 1.5, 2.0]}),
     "Gaussian Naive Bayes (PCA)": (GaussianNB(), {'var_smoothing': [1e-9, 1e-8, 1e-7]}),
-    "Decision Tree": (DecisionTreeClassifier(random_state=42), {'max_depth': [None, 10, 20, 30], 'min_samples_split': [2, 5, 10]})
+    "Decision Tree": (DecisionTreeClassifier(random_state=42), {'max_depth': [None, 10, 20, 30], 'min_samples_split': [2, 5, 10]}),
+    "Random Forest": (
+        RandomForestClassifier(random_state=42, n_jobs=-1),
+        {
+            'n_estimators': [200, 400],
+            'max_depth': [None, 20],
+            'min_samples_split': [2, 5],
+        },
+    ),
 }
 
 best_model_obj = None
 best_vectorizer_obj = None
 best_pca_obj = None
 best_acc = 0.0
+best_meta = {}
 
-print("1. Evaluating and OPTIMIZING 18 Combinations (3 Models x 3 Schemes x 2 Text Representations)...")
+total_combos = len(ml_models) * len(schemes) * 2
+print(f"1. Evaluating and OPTIMIZING {total_combos} Combinations ({len(ml_models)} Models x 3 Schemes x 2 Text Representations)...")
 
 vectorizations = {
     "Bag-Of-Words": CountVectorizer(max_features=2500),
-    "TF-IDF": TfidfVectorizer(max_features=2500)
+    "TF-IDF": TfidfVectorizer(max_features=2500),
 }
 
 # Core iteration for evaluating all schemas just like the SAD Project reference
@@ -106,7 +117,8 @@ for scheme_name, texts in schemes.items():
     
     for vec_name, vectorizer in vectorizations.items():
         print(f"      -> Representation: {vec_name}")
-        X_vec = vectorizer.fit_transform(texts).toarray()
+        vec = clone(vectorizer)
+        X_vec = vec.fit_transform(texts).toarray()
         
         X_train, X_test, y_train, y_test = train_test_split(X_vec, y, test_size=0.2, random_state=42, stratify=y)
         
@@ -115,7 +127,7 @@ for scheme_name, texts in schemes.items():
         
         for model_name, (base_model, param_grid) in ml_models.items():
             try:
-                grid_search = GridSearchCV(base_model, param_grid, cv=5, scoring='accuracy', n_jobs=-1)
+                grid_search = GridSearchCV(clone(base_model), param_grid, cv=3, scoring='accuracy', n_jobs=-1)
 
                 if "PCA" in model_name:
                     pca = PCA(n_components=min(15, X_train.shape[1]), random_state=42)
@@ -155,11 +167,19 @@ for scheme_name, texts in schemes.items():
                 if acc > best_acc:
                     best_acc = acc
                     best_model_obj = best_model
-                    best_vectorizer_obj = vectorizer
+                    best_vectorizer_obj = vec
                     if "PCA" in model_name:
                         best_pca_obj = pca
                     else:
                         best_pca_obj = None
+                    best_meta = {
+                        "scheme": scheme_name,
+                        "features": vec_name,
+                        "model_key": model_name,
+                        "uses_pca": bool("PCA" in model_name),
+                        "test_size": 0.2,
+                        "random_state": 42,
+                    }
 
                 add_result("Machine Learning", f"{model_name} (Optimized)", scheme_name, vec_name, acc, prec, rec, f1_val, roc_val)
             except Exception as e:
@@ -191,6 +211,12 @@ print(f"Scheme:   {best_model_row['Scheme']}")
 print(f"Features: {best_model_row['Features']}")
 print(f"Score:    {best_model_row['Accuracy']*100:.2f}% Test Accuracy")
 print("="*80)
+
+# Persist the best configuration for downstream error analysis (before/after optimization reporting)
+if best_meta:
+    DOCS_DIR.mkdir(exist_ok=True)
+    with open(DOCS_DIR / "best_config.json", "w", encoding="utf-8") as f:
+        json.dump(best_meta, f, indent=2)
 
 # Export winning stack exactly like expected in api.py
 joblib.dump(best_model_obj, MODELS_DIR / "best_classifier_model.pkl")
