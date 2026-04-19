@@ -112,4 +112,8 @@ def predict():
 
 if __name__ == '__main__':
     # Run API on port 5000
-    app.run(debug=True, host='127.0.0.1', port=5000)
+    # Note: avoid Flask's debug reloader by default (it can spawn a second process
+    # under a different interpreter on Windows).
+    debug = os.getenv("FLASK_DEBUG", "0") == "1"
+    port = int(os.getenv("PORT", "5000"))
+    app.run(debug=debug, use_reloader=False, host='127.0.0.1', port=port)

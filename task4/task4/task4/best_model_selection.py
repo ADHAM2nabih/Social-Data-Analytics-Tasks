@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import sys
 import pandas as pd
 import numpy as np
 import joblib
@@ -33,6 +34,23 @@ TASKS_ROOT = find_tasks_root(SCRIPT_DIR)
 DATA_PATH = TASKS_ROOT / "task3" / "final_data" / "labels" / "labeled_dataset.csv"
 MODELS_DIR = SCRIPT_DIR / "models"
 DOCS_DIR = SCRIPT_DIR / "docs"
+
+# Reuse Task 3 lexical baselines (SentiWordNet + Bing Liu with negation)
+LEXICAL_OK = False
+try:
+    TASK3_DIR = TASKS_ROOT / "task3"
+    sys.path.insert(0, str(TASK3_DIR))
+    from sentiment.lexical_models import (
+        load_wordlist,
+        sentiwordnet_style_predict,
+        bing_liu_predict_with_negation,
+    )
+
+    POS_WORDS_PATH = TASK3_DIR / "words" / "positive-words.txt"
+    NEG_WORDS_PATH = TASK3_DIR / "words" / "negative-words.txt"
+    LEXICAL_OK = POS_WORDS_PATH.exists() and NEG_WORDS_PATH.exists()
+except Exception:
+    LEXICAL_OK = False
 
 # Store results
 leaderboard = []
@@ -185,6 +203,47 @@ for scheme_name, texts in schemes.items():
             except Exception as e:
                 print(f"         [!] Error running {model_name} on {scheme_name} / {vec_name}: {e}")
 
+# ------------------------------------------
+# Lexical models (3 variants × 2 lexicons = 6)
+# ------------------------------------------
+if LEXICAL_OK:
+    print("\n2. Evaluating Lexical Models (SentiWordNet + Bing Liu w/ Negation)...")
+    pos_words = load_wordlist(str(POS_WORDS_PATH))
+    neg_words = load_wordlist(str(NEG_WORDS_PATH))
+    y_text_all = df["final_label"].astype(str).str.strip().str.capitalize().tolist()
+
+    for scheme_name, texts in schemes.items():
+        toks_list = [(t or "").split() for t in texts]
+        _, y_test, _, toks_test = train_test_split(
+            y_text_all,
+            toks_list,
+            test_size=0.2,
+            random_state=42,
+            stratify=y,
+        )
+
+        def _score(preds_text):
+            y_true = list(y_test)
+            y_pred = [str(v).strip().capitalize() for v in preds_text]
+            acc = accuracy_score(y_true, y_pred)
+            prec = precision_score(y_true, y_pred, average='weighted', zero_division=0)
+            rec = recall_score(y_true, y_pred, average='weighted', zero_division=0)
+            f1_val = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+            return acc, prec, rec, f1_val
+
+        try:
+            preds = [sentiwordnet_style_predict(toks, set(), set())[1] for toks in toks_test]
+            acc, prec, rec, f1_val = _score(preds)
+            add_result("Lexical", f"{scheme_name}/lexical/sentiwordnet", scheme_name, "SentiWordNet", acc, prec, rec, f1_val, np.nan)
+        except Exception as e:
+            print(f"   [!] SentiWordNet failed for {scheme_name}: {e}")
+
+        preds = [bing_liu_predict_with_negation(toks, pos_words, neg_words)[1] for toks in toks_test]
+        acc, prec, rec, f1_val = _score(preds)
+        add_result("Lexical", f"{scheme_name}/lexical/bing_liu_negation", scheme_name, "BingLiuNegation", acc, prec, rec, f1_val, np.nan)
+else:
+    print("\n[WARN] Lexical models skipped (Task 3 lexicon code/files not available).")
+
 # ==========================================
 # 3. LEADERBOARD & SELECTION
 # ==========================================
@@ -203,7 +262,8 @@ DOCS_DIR.mkdir(exist_ok=True)
 results_df.to_csv(DOCS_DIR / "leaderboard.csv", index=False)
 
 print("\n" + "="*80)
-best_model_row = results_df.iloc[0]
+ml_only = results_df[results_df["Category"] == "Machine Learning"].reset_index(drop=True)
+best_model_row = ml_only.iloc[0]
 print("🎉 WINNING CONFIGURATION (Deployed Object) 🎉")
 print(f"Category: {best_model_row['Category']}")
 print(f"Model:    {best_model_row['Model']}")
