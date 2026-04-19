@@ -138,3 +138,10 @@ uvicorn api:app --reload --port 8000
 
 ## إن احتجت مساعدة إضافية
 - أستطيع: إضافة ملف `.env.example` تلقائي، تشغيل اختبارات محلية أو عمل commit و push لملف README. أخبرني أي خطوة تريدني أن أنفذها.
+
+
+
+
+
+
+Set-Location "c:\Users\Rowan\OneDrive\Desktop\collage\semester8\social analytics\tasks\Social-Data-Analytics-Tasks\task4"; $env:STREAMLIT_BROWSER_GATHER_USAGE_STATS = "false"; & "c:/Users/Rowan/OneDrive/Desktop/collage/semester8/social analytics/tasks/.venv/Scripts/python.exe" -m streamlit run streamlit_app.py --server.address 127.0.0.1 --server.port 8501
